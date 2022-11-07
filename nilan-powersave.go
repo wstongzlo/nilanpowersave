@@ -476,12 +476,12 @@ func GetLowestPriceHours(scrapURL string) ([]int, []float64, error) {
 
 func main() {
 	//Create nilan logfile
-	f, err := os.OpenFile("/home/kevin/nilan-hk/nilanlogfile"+time.Now().Format("2006-01-02"), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	log.SetOutput(f)
-	if err != nil {
-		log.Fatalf("error opening file: %v", err)
-	}
-	defer f.Close()
+	/* 	f, err := os.OpenFile("/home/kevin/nilan-hk/nilanlogfile"+time.Now().Format("2006-01-02"), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	   	log.SetOutput(f)
+	   	if err != nil {
+	   		log.Fatalf("error opening file: %v", err)
+	   	}
+	   	defer f.Close() */
 
 	isAutoSavePowerMode = true
 
