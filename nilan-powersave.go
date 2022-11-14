@@ -15,20 +15,25 @@ import (
 	"github.com/brutella/hc/service"
 	"github.com/gocolly/colly"
 	"github.com/pjuzeliunas/nilan"
+	"github.com/theherk/viper"
 )
 
 // Nilan CTS700 accessory
 type Nilan struct {
 	*accessory.Accessory
 
-	CentralHeatingSwitch    *service.Switch
-	VentilationThermostat   *NilanFanThermostat
-	OutdoorTemp             *service.TemperatureSensor
-	Fan                     *NilanFan
-	HotWaterSwitch          *service.Switch
-	HotWater                *service.Thermostat
-	SupplyFlow              *service.Thermostat
-	AutoPowerSaveModeSwitch *service.Switch
+	CentralHeatingSwitch  *service.Switch
+	VentilationThermostat *NilanFanThermostat
+	OutdoorTemp           *service.TemperatureSensor
+	Fan                   *NilanFan
+	HotWaterSwitch        *service.Switch
+	HotWater              *service.Thermostat
+	SupplyFlow            *service.Thermostat
+	//for save power mode setting
+	AutoPowerSaveModeSwitch       *service.Switch
+	MustHeatTemperatureDifference *service.Thermostat
+	StopHeatTemperatureDifference *service.Thermostat
+	RunHours                      *service.Thermostat
 }
 
 // NilanFanThermostat service
@@ -69,7 +74,10 @@ func NewNilanFan() *NilanFan {
 }
 
 var (
-	isAutoSavePowerMode bool
+	isAutoSavePowerMode           bool
+	runHours                      int
+	mustHeatTemperatureDifference int
+	stopHeatTemperatureDifference int
 )
 
 // NewNilan sets Nilan accessory instance up
@@ -77,12 +85,71 @@ func NewNilan(info accessory.Info) *Nilan {
 	acc := Nilan{}
 	acc.Accessory = accessory.New(info, accessory.TypeHeater)
 
+	//start auto save power mode components
 	acc.AutoPowerSaveModeSwitch = service.NewSwitch()
 	acc.AutoPowerSaveModeSwitch.AddCharacteristic(newName("Auto SaveMode"))
 	acc.AutoPowerSaveModeSwitch.On.OnValueRemoteUpdate(func(on bool) {
 		log.Printf("Auto save mode active: %v\n", on)
 		isAutoSavePowerMode = on
+		viper.Set("savemode.on", on)
+		viper.WriteConfig()
 	})
+
+	acc.MustHeatTemperatureDifference = service.NewThermostat()
+	acc.MustHeatTemperatureDifference.AddCharacteristic(newName("Must heat temperature difference"))
+	acc.MustHeatTemperatureDifference.TargetTemperature.SetMinValue(1.0)
+	acc.MustHeatTemperatureDifference.TargetTemperature.SetMaxValue(50.0)
+	acc.MustHeatTemperatureDifference.TargetTemperature.SetStepValue(1.0)
+	acc.MustHeatTemperatureDifference.TargetTemperature.SetValue(float64(mustHeatTemperatureDifference))
+	acc.MustHeatTemperatureDifference.TargetTemperature.OnValueRemoteUpdate(func(tFloat float64) {
+		log.Printf("Setting new must heat target temperature: %v\n", tFloat)
+		mustHeatTemperatureDifference = int(tFloat)
+		viper.Set("setting.mustheatdf", mustHeatTemperatureDifference)
+		viper.WriteConfig()
+		t := int(tFloat * 10.0)
+		if !(t >= 10 && t <= 500) {
+			log.Println("Invalid must heat target temperature setting. Ignoring change request.")
+			return
+		}
+	})
+
+	acc.StopHeatTemperatureDifference = service.NewThermostat()
+	acc.StopHeatTemperatureDifference.AddCharacteristic(newName("Must stop heat temperature difference"))
+	acc.StopHeatTemperatureDifference.TargetTemperature.SetMinValue(1.0)
+	acc.StopHeatTemperatureDifference.TargetTemperature.SetMaxValue(50.0)
+	acc.StopHeatTemperatureDifference.TargetTemperature.SetStepValue(1.0)
+	acc.StopHeatTemperatureDifference.TargetTemperature.SetValue(float64(stopHeatTemperatureDifference))
+	acc.StopHeatTemperatureDifference.TargetTemperature.OnValueRemoteUpdate(func(tFloat float64) {
+		log.Printf("Setting new stop heat target temperature: %v\n", tFloat)
+		stopHeatTemperatureDifference = int(tFloat)
+		viper.Set("setting.stopheatdf", stopHeatTemperatureDifference)
+		viper.WriteConfig()
+		t := int(tFloat * 10.0)
+		if !(t >= 10 && t <= 500) {
+			log.Println("Invalid stop heat target temperature setting. Ignoring change request.")
+			return
+		}
+	})
+
+	acc.RunHours = service.NewThermostat()
+	acc.RunHours.AddCharacteristic(newName("Run hours"))
+	acc.RunHours.TargetTemperature.SetMinValue(1.0)
+	acc.RunHours.TargetTemperature.SetMaxValue(23.0)
+	acc.RunHours.TargetTemperature.SetStepValue(1.0)
+	acc.RunHours.TargetTemperature.SetValue(float64(runHours))
+	acc.RunHours.TemperatureDisplayUnits.Description = "hours"
+	acc.RunHours.TargetTemperature.OnValueRemoteUpdate(func(tFloat float64) {
+		log.Printf("Setting new run hours: %v\n", tFloat)
+		runHours = int(tFloat)
+		viper.Set("setting.runhours", runHours)
+		viper.WriteConfig()
+		t := int(tFloat * 10.0)
+		if !(t >= 10 && t <= 230) {
+			log.Println("Invalid run hours setting. Ignoring change request.")
+			return
+		}
+	})
+	//end auto save power mode components
 
 	acc.CentralHeatingSwitch = service.NewSwitch()
 	acc.CentralHeatingSwitch.AddCharacteristic(newName("Central Heating"))
@@ -230,6 +297,9 @@ func NewNilan(info accessory.Info) *Nilan {
 	acc.AddService(acc.HotWater.Service)
 	acc.AddService(acc.SupplyFlow.Service)
 	acc.AddService(acc.AutoPowerSaveModeSwitch.Service)
+	acc.AddService(acc.MustHeatTemperatureDifference.Service)
+	acc.AddService(acc.StopHeatTemperatureDifference.Service)
+	acc.AddService(acc.RunHours.Service)
 	return &acc
 }
 
@@ -325,29 +395,43 @@ func autoConfigure(freq time.Duration) {
 	runOnce = true
 	initialOnce = true
 
-	lowestThreePrices := make([]float64, 3)
-	lowestThreeHours := make([]int, 3)
+	lowestThreePrices := make([]float64, runHours)
+	lowestThreeHours := make([]int, runHours)
 
 	for {
 		dt := time.Now()
 
 		log.Printf("get lowest price once is %t", runOnce)
 		// Get lowest electric price from andel energi
-		if (dt.Local().Hour() == 0 && runOnce) || initialOnce {
+		if (dt.Local().Hour() == 20 && runOnce) || initialOnce {
 			scrapUrl := "https://andelenergi.dk/kundeservice/aftaler-og-priser/timepris/"
-			lowestThreeHours, lowestThreePrices, _ = GetLowestPriceHours(scrapUrl)
+			lowestThreeHours, lowestThreePrices, _ = GetLowestPriceHours(scrapUrl, runHours)
 			runOnce = false
 			initialOnce = false
-		} else if dt.Local().Hour() != 0 {
+		} else if dt.Local().Hour() != 20 {
 			runOnce = true
 		}
 		r, _ := c.FetchReadings()
 		s, _ := c.FetchSettings()
+		log.Println("The lowest electric price three hours are:")
+		for i := 0; i < runHours; i++ {
+			log.Printf(" %d", lowestThreeHours[i])
+		}
+		log.Println("The lowest electric price are:")
+		for i := 0; i < runHours; i++ {
+			log.Printf(" %g", lowestThreePrices[i])
+		}
 
-		log.Printf("The lowest electric price three hours are  %d , %d , %d", lowestThreeHours[0], lowestThreeHours[1], lowestThreeHours[2])
-		log.Printf("The lowest electric price are  %g , %g , %g", lowestThreePrices[0], lowestThreePrices[1], lowestThreePrices[2])
+		//If it's in the hours of heating
+		inHoursHeating := false
+		for i := 0; i < runHours; i++ {
+			if lowestThreeHours[i] == dt.Local().Hour() {
+				inHoursHeating = true
+			}
+		}
+
 		//if dt.Local().Hour() >= 0 && dt.Local().Hour() <= 2 {
-		if dt.Local().Hour() == lowestThreeHours[0] || dt.Local().Hour() == lowestThreeHours[1] || dt.Local().Hour() == lowestThreeHours[2] {
+		if inHoursHeating || (*s.DesiredDHWTemperature-r.DHWTankTopTemperature)/10 >= mustHeatTemperatureDifference {
 			log.Printf("night:hot water temperature settting is %v and actual temperature is %v and production pause is %v", *s.DesiredDHWTemperature, r.DHWTankTopTemperature, *s.DHWProductionPaused)
 			if *s.DHWProductionPaused && isAutoSavePowerMode {
 				log.Printf("Open the hot water")
@@ -361,7 +445,7 @@ func autoConfigure(freq time.Duration) {
 
 		} else {
 			log.Printf("day:hot water temperature settting is %v and actual temperature is %v and production pause is %v", *s.DesiredDHWTemperature, r.DHWTankTopTemperature, *s.DHWProductionPaused)
-			if (*s.DesiredDHWTemperature-r.DHWTankTopTemperature)/10 < 10 && !*s.DHWProductionPaused && isAutoSavePowerMode {
+			if (*s.DesiredDHWTemperature-r.DHWTankTopTemperature)/10 < stopHeatTemperatureDifference && !*s.DHWProductionPaused && isAutoSavePowerMode {
 				log.Printf("Close the hot water")
 				s := nilan.Settings{}
 				p := true
@@ -377,7 +461,7 @@ func autoConfigure(freq time.Duration) {
 }
 
 // Return three lowest price hour
-func GetLowestPriceHours(scrapURL string) ([]int, []float64, error) {
+func GetLowestPriceHours(scrapURL string, runHours int) ([]int, []float64, error) {
 	//define struct to accept json data
 	type DateAndDay struct {
 		Date string `json:"date"`
@@ -396,41 +480,48 @@ func GetLowestPriceHours(scrapURL string) ([]int, []float64, error) {
 	}
 
 	c := colly.NewCollector()
-	minvalue := make([]float64, 3)
-	minhour := make([]int, 3)
-	minvalue[0] = 9999
-	minvalue[1] = 9999
-	minvalue[2] = 9999
-
-	minhour[0] = -1
-	minhour[1] = -1
-	minhour[2] = -1
+	minvalue := make([]float64, runHours)
+	minhour := make([]int, runHours)
+	for i := 0; i < runHours; i++ {
+		minvalue[i] = 9999
+		minhour[i] = -1
+	}
 	c.OnHTML("div#chart-component", func(e *colly.HTMLElement) {
 
 		priceJson := e.Attr("data-chart")
 		var str Eall
 		err := json.Unmarshal([]byte(priceJson), &str)
 		if err != nil {
-			log.Print(err.Error())
 			return
 		}
 
-		if strings.TrimSpace(str.East.Dates[len(str.East.Dates)-1].Day) == strconv.Itoa(time.Now().Local().Day()) {
-
-			for i := 0; i < 3; i++ {
-				s, _ := strconv.ParseFloat(str.East.Values[len(str.East.Values)-24+i], 64)
-				if i != minhour[0] && i != minhour[1] {
-					minvalue[i] = s
-					minhour[i] = i
-				}
-
+		if strings.TrimSpace(str.East.Dates[len(str.East.Dates)-1].Day) == strconv.Itoa(time.Now().Day()) {
+			for i := 0; i < runHours; i++ {
 				for j := 0; j < 24; j++ {
-					if j != minhour[0] && j != minhour[1] {
-						s1, _ := strconv.ParseFloat(str.East.Values[len(str.East.Values)-24+j], 64)
+					hasCompared := false
+					for k := 0; k <= i; k++ {
+						if j >= 0 && j < 4 {
+							if j+20 == minhour[k] {
+								hasCompared = true
+							}
+						} else {
+							if j-4 == minhour[k] {
+								hasCompared = true
+							}
+						}
+
+					}
+					if !hasCompared {
+						s1, _ := strconv.ParseFloat(str.East.Values[len(str.East.Values)-28+j], 64)
 
 						if s1 < minvalue[i] {
-							minvalue[i] = s1
-							minhour[i] = j
+							if j >= 0 && j < 4 {
+								minvalue[i] = s1
+								minhour[i] = j + 20
+							} else {
+								minvalue[i] = s1
+								minhour[i] = j - 4
+							}
 						}
 					}
 
@@ -438,26 +529,77 @@ func GetLowestPriceHours(scrapURL string) ([]int, []float64, error) {
 
 			}
 		} else if strings.TrimSpace(str.East.Dates[len(str.East.Dates)-1].Day) == strconv.Itoa(time.Now().Day()+1) {
-			for i := 0; i < 3; i++ {
-				s, _ := strconv.ParseFloat(str.East.Values[len(str.East.Values)-48+i], 64)
-				if i != minhour[0] && i != minhour[1] {
-					minvalue[i] = s
-					minhour[i] = i
-				}
-
-				for j := 0; j < 24; j++ {
-					if j != minhour[0] && j != minhour[1] {
-						s1, _ := strconv.ParseFloat(str.East.Values[len(str.East.Values)-48+j], 64)
-
-						if s1 < minvalue[i] {
-							minvalue[i] = s1
-							minhour[i] = j
+			if time.Now().Local().Hour() < 20 {
+				for i := 0; i < runHours; i++ {
+					for j := 0; j < 24; j++ {
+						hasCompared := false
+						for k := 0; k <= i; k++ {
+							if j >= 0 && j < 4 {
+								if j+20 == minhour[k] {
+									hasCompared = true
+								}
+							} else {
+								if j-4 == minhour[k] {
+									hasCompared = true
+								}
+							}
 						}
+						if !hasCompared {
+							s1, _ := strconv.ParseFloat(str.East.Values[len(str.East.Values)-52+j], 64)
+
+							if s1 < minvalue[i] {
+								if j >= 0 && j < 4 {
+									minvalue[i] = s1
+									minhour[i] = j + 20
+								} else {
+									minvalue[i] = s1
+									minhour[i] = j - 4
+								}
+
+							}
+						}
+
 					}
 
 				}
+			} else {
+				for i := 0; i < runHours; i++ {
+					for j := 0; j < 24; j++ {
+						hasCompared := false
 
+						if j <= 23 && j >= 4 {
+							for k := 0; k <= i; k++ {
+								if j-4 == minhour[k] {
+									hasCompared = true
+								}
+							}
+							if !hasCompared {
+								s1, _ := strconv.ParseFloat(str.East.Values[len(str.East.Values)-28+j], 64)
+
+								if s1 < minvalue[i] {
+									minvalue[i] = s1
+									minhour[i] = j - 4
+								}
+							}
+						} else {
+							for k := 0; k <= i; k++ {
+								if j+20 == minhour[k] {
+									hasCompared = true
+								}
+							}
+							if !hasCompared {
+								s1, _ := strconv.ParseFloat(str.East.Values[len(str.East.Values)-28+j], 64)
+
+								if s1 < minvalue[i] {
+									minvalue[i] = s1
+									minhour[i] = j + 20
+								}
+							}
+						}
+					}
+				}
 			}
+
 		}
 
 	})
@@ -475,16 +617,28 @@ func GetLowestPriceHours(scrapURL string) ([]int, []float64, error) {
 }
 
 func main() {
+
 	//Create nilan logfile
-	/* 	f, err := os.OpenFile("/home/kevin/nilan-hk/nilanlogfile"+time.Now().Format("2006-01-02"), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	   	log.SetOutput(f)
-	   	if err != nil {
-	   		log.Fatalf("error opening file: %v", err)
-	   	}
-	   	defer f.Close() */
+	f, err := os.OpenFile("/home/kevin/nilan-log/nilanlogfile"+time.Now().Format("2006-01-02"), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	//f, err := os.OpenFile("/home/Emil/nilan-log/nilanlogfile"+time.Now().Format("2006-01-02"), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	log.SetOutput(f)
+	if err != nil {
+		log.Fatalf("error opening log file: %v", err)
+	}
+	defer f.Close()
+	log.Println("Start the Nilan-hk program!!!")
+	//read config.toml to initialize the variable
+	viper.SetConfigName("config")               // name of config file (without extension)
+	viper.AddConfigPath("/home/kevin/nilan-hk") // optionally look for config in the working directory
+	err1 := viper.ReadInConfig()                // Find and read the config file
+	if err1 != nil {
+		log.Fatalf("error opening config file: %v", err)
+	}
 
-	isAutoSavePowerMode = true
-
+	isAutoSavePowerMode = viper.GetBool("savemode.on")
+	runHours = viper.GetInt("setting.runhours")
+	mustHeatTemperatureDifference = viper.GetInt("setting.mustheatdf")
+	stopHeatTemperatureDifference = viper.GetInt("setting.stopheatdf")
 	// create an accessory
 	info := accessory.Info{Name: "Nilan"}
 	ac := NewNilan(info)

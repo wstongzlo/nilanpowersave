@@ -1,0 +1,6 @@
+[savemode]
+on = true
+[setting]
+mustheatdf = 20
+stopheatdf = 10
+runhours = 3
