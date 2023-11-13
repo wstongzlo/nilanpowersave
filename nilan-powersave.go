@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -78,6 +79,7 @@ var (
 	runHours                      int
 	mustHeatTemperatureDifference int
 	stopHeatTemperatureDifference int
+	celiusHours                   float64
 )
 
 // NewNilan sets Nilan accessory instance up
@@ -391,10 +393,10 @@ func autoConfigure(freq time.Duration) {
 
 	c := nilanController()
 
-	var runOnce, initialOnce bool
+	var runOnce, runOnce2, initialOnce bool
 	runOnce = true
 	initialOnce = true
-
+	runOnce2 = true
 	lowestThreePrices := make([]float64, runHours)
 	lowestThreeHours := make([]int, runHours)
 
@@ -407,20 +409,28 @@ func autoConfigure(freq time.Duration) {
 			scrapUrl := "https://andelenergi.dk/kundeservice/aftaler-og-priser/timepris/"
 			lowestThreeHours, lowestThreePrices, _ = GetLowestPriceHours(scrapUrl, runHours)
 			runOnce = false
-			initialOnce = false
+
 		} else if dt.Local().Hour() != 20 {
 			runOnce = true
 		}
+
 		r, _ := c.FetchReadings()
 		s, _ := c.FetchSettings()
-		log.Println("The lowest electric price three hours are:")
-		for i := 0; i < runHours; i++ {
-			log.Printf(" %d", lowestThreeHours[i])
+		if (dt.Local().Hour() == 0 && runOnce2) || initialOnce {
+			runHours = int(math.Round(float64(*s.DesiredDHWTemperature-r.DHWTankTopTemperature) / (celiusHours * 10)))
+			runOnce2 = false
+		} else if dt.Local().Hour() != 0 {
+			runOnce2 = true
 		}
+
+		initialOnce = false
+		log.Println("The lowest electric price hours are:")
+
+		log.Println(lowestThreeHours)
+
 		log.Println("The lowest electric price are:")
-		for i := 0; i < runHours; i++ {
-			log.Printf(" %g", lowestThreePrices[i])
-		}
+
+		log.Println(lowestThreePrices)
 
 		//If it's in the hours of heating
 		inHoursHeating := false
@@ -469,9 +479,10 @@ func GetLowestPriceHours(scrapURL string, runHours int) ([]int, []float64, error
 	}
 
 	type Earea struct {
-		Labels []string     `json:"labels"`
-		Values []string     `json:"values"`
-		Dates  []DateAndDay `json:"dates"`
+		Labels             []string     `json:"labels"`
+		Values             []string     `json:"values"`
+		ValuesDistribution []string     `json:"valuesDistribution"` //New added for transport expense 20231113
+		Dates              []DateAndDay `json:"dates"`
 	}
 
 	type Eall struct {
@@ -513,7 +524,9 @@ func GetLowestPriceHours(scrapURL string, runHours int) ([]int, []float64, error
 					}
 					if !hasCompared {
 						s1, _ := strconv.ParseFloat(str.East.Values[len(str.East.Values)-28+j], 64)
+						ete, _ := strconv.ParseFloat(str.East.ValuesDistribution[len(str.East.ValuesDistribution)-28+j], 64) // add transport expense
 
+						s1 = s1 + ete
 						if s1 < minvalue[i] {
 							if j >= 0 && j < 4 {
 								minvalue[i] = s1
@@ -546,7 +559,8 @@ func GetLowestPriceHours(scrapURL string, runHours int) ([]int, []float64, error
 						}
 						if !hasCompared {
 							s1, _ := strconv.ParseFloat(str.East.Values[len(str.East.Values)-52+j], 64)
-
+							ete, _ := strconv.ParseFloat(str.East.ValuesDistribution[len(str.East.ValuesDistribution)-52+j], 64) // add transport expense
+							s1 = s1 + ete
 							if s1 < minvalue[i] {
 								if j >= 0 && j < 4 {
 									minvalue[i] = s1
@@ -575,7 +589,8 @@ func GetLowestPriceHours(scrapURL string, runHours int) ([]int, []float64, error
 							}
 							if !hasCompared {
 								s1, _ := strconv.ParseFloat(str.East.Values[len(str.East.Values)-28+j], 64)
-
+								ete, _ := strconv.ParseFloat(str.East.ValuesDistribution[len(str.East.ValuesDistribution)-28+j], 64) // add transport expense
+								s1 = s1 + ete
 								if s1 < minvalue[i] {
 									minvalue[i] = s1
 									minhour[i] = j - 4
@@ -589,7 +604,8 @@ func GetLowestPriceHours(scrapURL string, runHours int) ([]int, []float64, error
 							}
 							if !hasCompared {
 								s1, _ := strconv.ParseFloat(str.East.Values[len(str.East.Values)-28+j], 64)
-
+								ete, _ := strconv.ParseFloat(str.East.ValuesDistribution[len(str.East.ValuesDistribution)-28+j], 64) // add transport expense
+								s1 = s1 + ete
 								if s1 < minvalue[i] {
 									minvalue[i] = s1
 									minhour[i] = j + 20
@@ -626,6 +642,10 @@ func main() {
 		log.Fatalf("error opening log file: %v", err)
 	}
 	defer f.Close()
+
+	//Add 30 seconds delay to wait Nilan machine to start
+	time.Sleep(30 * time.Second)
+
 	log.Println("Start the Nilan-hk program!!!")
 	//read config.toml to initialize the variable
 	viper.SetConfigName("config")               // name of config file (without extension)
@@ -639,6 +659,8 @@ func main() {
 	runHours = viper.GetInt("setting.runhours")
 	mustHeatTemperatureDifference = viper.GetInt("setting.mustheatdf")
 	stopHeatTemperatureDifference = viper.GetInt("setting.stopheatdf")
+	celiusHours = viper.GetFloat64("setting.celiusperhour")
+
 	// create an accessory
 	info := accessory.Info{Name: "Nilan"}
 	ac := NewNilan(info)
