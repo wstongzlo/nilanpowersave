@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -79,7 +78,7 @@ var (
 	runHours                      int
 	mustHeatTemperatureDifference int
 	stopHeatTemperatureDifference int
-	celiusHours                   float64
+	//celiusHours                   float64
 )
 
 // NewNilan sets Nilan accessory instance up
@@ -393,10 +392,10 @@ func autoConfigure(freq time.Duration) {
 
 	c := nilanController()
 
-	var runOnce, runOnce2, initialOnce bool
+	var runOnce, initialOnce bool
 	runOnce = true
 	initialOnce = true
-	runOnce2 = true
+	//runOnce2 = true
 	lowestThreePrices := make([]float64, runHours)
 	lowestThreeHours := make([]int, runHours)
 
@@ -416,12 +415,12 @@ func autoConfigure(freq time.Duration) {
 
 		r, _ := c.FetchReadings()
 		s, _ := c.FetchSettings()
-		if (dt.Local().Hour() == 0 && runOnce2) || initialOnce {
-			runHours = int(math.Round(float64(*s.DesiredDHWTemperature-r.DHWTankTopTemperature) / (celiusHours * 10)))
-			runOnce2 = false
-		} else if dt.Local().Hour() != 0 {
-			runOnce2 = true
-		}
+		/* 		if (dt.Local().Hour() == 0 && runOnce2) || initialOnce {
+		   			runHours = int(math.Round(float64(*s.DesiredDHWTemperature-r.DHWTankTopTemperature) / (celiusHours * 10)))
+		   			runOnce2 = false
+		   		} else if dt.Local().Hour() != 0 {
+		   			runOnce2 = true
+		   		} */
 
 		initialOnce = false
 		log.Println("The lowest electric price hours are:")
@@ -440,7 +439,6 @@ func autoConfigure(freq time.Duration) {
 			}
 		}
 
-		//if dt.Local().Hour() >= 0 && dt.Local().Hour() <= 2 {
 		if inHoursHeating || (*s.DesiredDHWTemperature-r.DHWTankTopTemperature)/10 >= mustHeatTemperatureDifference {
 			log.Printf("night:hot water temperature settting is %v and actual temperature is %v and production pause is %v", *s.DesiredDHWTemperature, r.DHWTankTopTemperature, *s.DHWProductionPaused)
 			if *s.DHWProductionPaused && isAutoSavePowerMode {
@@ -659,7 +657,7 @@ func main() {
 	runHours = viper.GetInt("setting.runhours")
 	mustHeatTemperatureDifference = viper.GetInt("setting.mustheatdf")
 	stopHeatTemperatureDifference = viper.GetInt("setting.stopheatdf")
-	celiusHours = viper.GetFloat64("setting.celiusperhour")
+	//celiusHours = viper.GetFloat64("setting.celiusperhour")
 
 	// create an accessory
 	info := accessory.Info{Name: "Nilan"}
